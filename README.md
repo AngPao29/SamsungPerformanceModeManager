@@ -1,4 +1,4 @@
-# Samsung Performance Mode Manager
+# Performance Manager for Galaxy Book
 
 Gestisce automaticamente la modalità prestazioni del Galaxy Book in base ad alimentazione e carica batteria.
 
@@ -24,12 +24,12 @@ Il task pianificato punta direttamente a `C:\Scripts\PerformanceManagerGB.ps1`, 
 
 1. **Fermare il task in esecuzione** (terminale Amministratore):
    ```powershell
-   Stop-ScheduledTask -TaskName "Samsung Performance Mode Manager"
+   Stop-ScheduledTask -TaskName "Performance Manager for Galaxy Book"
    ```
 2. **Salvare le modifiche** al file `.ps1`
 3. **Riavviare il task**:
    ```powershell
-   Start-ScheduledTask -TaskName "Samsung Performance Mode Manager"
+   Start-ScheduledTask -TaskName "Performance Manager for Galaxy Book"
    ```
 
 > Se modifichi anche `Installa-TaskPianificato.ps1` (es. parametri del task), riesegui lo script di installazione: sovrascriverà il task esistente.
@@ -37,6 +37,6 @@ Il task pianificato punta direttamente a `C:\Scripts\PerformanceManagerGB.ps1`, 
 ## Disinstallazione
 
 ```powershell
-Stop-ScheduledTask -TaskName "Samsung Performance Mode Manager"
-Unregister-ScheduledTask -TaskName "Samsung Performance Mode Manager" -Confirm:$false
+Stop-ScheduledTask -TaskName "Performance Manager for Galaxy Book"
+Unregister-ScheduledTask -TaskName "Performance Manager for Galaxy Book" -Confirm:$false
 ```
