@@ -4,7 +4,7 @@ Gestisce automaticamente la modalità prestazioni del Galaxy Book in base ad ali
 
 ## Requisiti
 
-- Windows con PowerShell 7+ (`pwsh.exe`)
+- Windows con PowerShell 5+ o 7+ (`pwsh.exe`)
 - Privilegi di Amministratore
 - Samsung Settings installato
 
