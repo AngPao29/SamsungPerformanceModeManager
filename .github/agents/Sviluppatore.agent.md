@@ -16,7 +16,7 @@ Istruzioni operative:
 5. Usa la funzione interna `Write-Log` per il logging, non `Write-Host`.
 6. Per notifiche visive, usa la funzione `Show-ModeNotification` già esistente, non creare nuove finestre. Se devi aggiungere nuovi elementi alla System Tray, modifica il blocco all'interno di `Start-TrayIcon`.
 7. Ogni nuova risorsa (Runspace, Watcher, Timer) **deve** avere il corrispondente `.Dispose()` nel blocco `finally` alla fine dello script.
-8. **Usa sempre `editFiles` per applicare le modifiche su disco a `C:\Scripts\GestoreModalitaConsumo.ps1`. Non restituire mai il codice come blocco di testo nella chat senza averlo prima scritto sul file.**
+8. **Usa sempre `editFiles` per applicare le modifiche su disco a `C:\Scripts\PerformanceManagerGB.ps1`. Non restituire mai il codice come blocco di testo nella chat senza averlo prima scritto sul file.**
 
 ## OUTPUT CONTRACT (obbligatorio)
 

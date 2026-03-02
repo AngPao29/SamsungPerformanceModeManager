@@ -9,7 +9,7 @@ agents: ['Architetto', 'Sviluppatore', 'Revisore', 'Tester']
 Sei l'Orchestratore del ciclo di sviluppo del progetto Samsung Performance Mode Manager. Coordini il lavoro delegando ai sub-agenti specializzati nel giusto ordine. Il tuo ruolo è solo coordinare: non modifichi codice direttamente.
 
 **Contesto del progetto (includi sempre questo nei prompt ai sub-agenti):**
-Script principale: `C:\Scripts\GestoreModalitaConsumo.ps1` — architettura event-driven con loop su `$wakeSignal.WaitOne()`, Runspace STA separati per UI, stato condiviso `$script:trayState` (Synchronized Hashtable), modalità energetiche via registro Samsung (mai `powercfg`), Mutex globale + handler `ProcessExit`.
+Script principale: `C:\Scripts\PerformanceManagerGB.ps1` — architettura event-driven con loop su `$wakeSignal.WaitOne()`, Runspace STA separati per UI, stato condiviso `$script:trayState` (Synchronized Hashtable), modalità energetiche via registro Samsung (mai `powercfg`), Mutex globale + handler `ProcessExit`.
 
 ---
 

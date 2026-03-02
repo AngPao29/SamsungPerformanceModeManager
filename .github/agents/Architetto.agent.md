@@ -23,7 +23,7 @@ Termina SEMPRE la tua risposta con questo blocco, compilato:
 ## HANDOFF → Sviluppatore
 
 **Feature:** [nome breve della feature]
-**File da modificare:** GestoreModalitaConsumo.ps1
+**File da modificare:** PerformanceManagerGB.ps1
 
 ### TODO
 1. [area: funzione/blocco] — [descrizione azione]
