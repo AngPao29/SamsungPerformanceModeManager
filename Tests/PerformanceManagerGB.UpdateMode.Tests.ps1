@@ -33,6 +33,8 @@ Describe 'PerformanceManagerGB - Update-PerformanceMode' {
         $script:AC_STATUSES           = @(2, 3, 6, 7, 8, 9)
 
         $script:MODE_NAMES = @{
+            0 = 'Nessun rumore'
+            1 = 'Silenzioso'
             2 = 'Ottimizzata'
             3 = 'Prestazioni Elevate'
         }
@@ -155,7 +157,7 @@ Describe 'PerformanceManagerGB - Update-PerformanceMode' {
     # =========================================================================
     Context 'Aggiornamento trayState' {
 
-        It 'Scenario 2: trayState.CurrentMode viene impostato al nome della modalita corrente' {
+        It 'Scenario 2: trayState.CurrentMode viene impostato al nome della modalita corrente (2 Ottimizzata)' {
             Mock Get-CimInstance {
                 return [PSCustomObject]@{ EstimatedChargeRemaining=50; BatteryStatus=1 }
             } -ParameterFilter { $ClassName -eq 'Win32_Battery' }
@@ -164,6 +166,28 @@ Describe 'PerformanceManagerGB - Update-PerformanceMode' {
             Update-PerformanceMode
 
             $script:trayState.CurrentMode | Should -Be 'Ottimizzata'
+        }
+
+        It 'Scenario 2b: trayState.CurrentMode mappa 0 a Nessun rumore' {
+            Mock Get-CimInstance {
+                return [PSCustomObject]@{ EstimatedChargeRemaining=50; BatteryStatus=1 }
+            } -ParameterFilter { $ClassName -eq 'Win32_Battery' }
+            Mock Get-CurrentPerformanceMode { return 0 }
+
+            Update-PerformanceMode
+
+            $script:trayState.CurrentMode | Should -Be 'Nessun rumore'
+        }
+
+        It 'Scenario 2c: trayState.CurrentMode mappa 1 a Silenzioso' {
+            Mock Get-CimInstance {
+                return [PSCustomObject]@{ EstimatedChargeRemaining=50; BatteryStatus=1 }
+            } -ParameterFilter { $ClassName -eq 'Win32_Battery' }
+            Mock Get-CurrentPerformanceMode { return 1 }
+
+            Update-PerformanceMode
+
+            $script:trayState.CurrentMode | Should -Be 'Silenzioso'
         }
 
         It 'Scenario 3: trayState.ChargePercent viene impostato alla percentuale rilevata' {

@@ -30,13 +30,37 @@ $regPerformance    = "HKLM:\SOFTWARE\Samsung\SamsungSettings\ModulePerformance"
 $regProtectBattery = "HKLM:\SOFTWARE\Samsung\SamsungSettings\ModuleProtectBattery"
 
 # --- Costanti modalità Samsung ---
+$MODE_NO_NOISE         = 0   # Nessun rumore
+$MODE_SILENT           = 1   # Silenzioso
 $MODE_OPTIMIZED        = 2   # Ottimizzata
 $MODE_HIGH_PERFORMANCE = 3   # Prestazioni Elevate
 
 # --- Mappa nomi modalità (per log leggibili) ---
 $MODE_NAMES = @{
+    $MODE_NO_NOISE         = 'Nessun rumore'
+    $MODE_SILENT           = 'Silenzioso'
     $MODE_OPTIMIZED        = 'Ottimizzata'
     $MODE_HIGH_PERFORMANCE = 'Prestazioni Elevate'
+}
+
+# --- Mappa visual per notifiche (glyph + colore) ---
+$MODE_VISUALS = @{
+    $MODE_NO_NOISE = @{
+        Glyph = [char]0xE74E  # Mute
+        Color = '#7A7A7A'
+    }
+    $MODE_SILENT = @{
+        Glyph = [char]0xE74F  # Volume basso
+        Color = '#9AA0A6'
+    }
+    $MODE_OPTIMIZED = @{
+        Glyph = [char]0xE946
+        Color = '#60CDFF'
+    }
+    $MODE_HIGH_PERFORMANCE = @{
+        Glyph = [char]0xE945
+        Color = '#FFAA2C'
+    }
 }
 
 # --- Mappa nomi stato batteria WMI (per log leggibili) ---
@@ -91,8 +115,13 @@ $script:trayState = [hashtable]::Synchronized(@{
     IsPaused           = $false
     SoundEnabled       = $true
     NotifPopupEnabled  = $true
+    ControlMode        = 'Auto'   # Auto | Manual
     RequestedMode      = $null
+    RequestedModeSource = $null
     ManualOverrideMode = $null
+    ManualOverrideSource = $null
+    ManualOverrideTimestamp = $null
+    ResumeAutomaticRequested = $false
     RequestExit        = $false
     LogFile            = $logFile
     WakeSignal         = $null   # popolato dopo la creazione dell'AutoResetEvent
@@ -358,9 +387,11 @@ public static class DpiHelper {
             return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
         }
 
-        $iconOpt   = New-CircleIcon "#60CDFF"   # Blu: Ottimizzata
-        $iconPerf  = New-CircleIcon "#FFAA2C"   # Arancione: Prestazioni Elevate
-        $iconPause = New-CircleIcon "#888888"   # Grigio: Automatismo sospeso
+        $iconNoNoise = New-CircleIcon "#7A7A7A"  # Grigio scuro: Nessun rumore
+        $iconSilent  = New-CircleIcon "#9AA0A6"  # Grigio chiaro: Silenzioso
+        $iconOpt     = New-CircleIcon "#60CDFF"  # Blu: Ottimizzata
+        $iconPerf    = New-CircleIcon "#FFAA2C"  # Arancione: Prestazioni Elevate
+        $iconPause   = New-CircleIcon "#888888"  # Grigio: Automatismo sospeso
 
         # --- NotifyIcon ---
         $notify = [System.Windows.Forms.NotifyIcon]::new()
@@ -376,13 +407,37 @@ public static class DpiHelper {
         [void]$menu.Items.Add($statusItem)
         [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
 
+        $forceNoNoiseItem = [System.Windows.Forms.ToolStripMenuItem]::new("Forza Nessun rumore")
+        $forceNoNoiseItem.Add_Click({
+            if ($State.ControlMode -eq 'Manual' -and $State.ManualOverrideMode -eq 0) {
+                $State.ResumeAutomaticRequested = $true
+            } else {
+                $State.RequestedMode = 0
+                $State.RequestedModeSource = 'Tray'
+            }
+            try { $State.WakeSignal.Set() } catch { }
+        }.GetNewClosure())
+        [void]$menu.Items.Add($forceNoNoiseItem)
+
+        $forceSilentItem = [System.Windows.Forms.ToolStripMenuItem]::new("Forza Silenzioso")
+        $forceSilentItem.Add_Click({
+            if ($State.ControlMode -eq 'Manual' -and $State.ManualOverrideMode -eq 1) {
+                $State.ResumeAutomaticRequested = $true
+            } else {
+                $State.RequestedMode = 1
+                $State.RequestedModeSource = 'Tray'
+            }
+            try { $State.WakeSignal.Set() } catch { }
+        }.GetNewClosure())
+        [void]$menu.Items.Add($forceSilentItem)
+
         $forceOptItem = [System.Windows.Forms.ToolStripMenuItem]::new("Forza Ottimizzata")
         $forceOptItem.Add_Click({
-            if ($State.ManualOverrideMode -eq 2) {
-                # Deseleziona: rimuove override e ripristina il flusso automatico
-                $State.ManualOverrideMode = $null
+            if ($State.ControlMode -eq 'Manual' -and $State.ManualOverrideMode -eq 2) {
+                $State.ResumeAutomaticRequested = $true
             } else {
                 $State.RequestedMode = 2
+                $State.RequestedModeSource = 'Tray'
             }
             try { $State.WakeSignal.Set() } catch { }
         }.GetNewClosure())
@@ -390,15 +445,23 @@ public static class DpiHelper {
 
         $forcePerfItem = [System.Windows.Forms.ToolStripMenuItem]::new("Forza Prestazioni Elevate")
         $forcePerfItem.Add_Click({
-            if ($State.ManualOverrideMode -eq 3) {
-                # Deseleziona: rimuove override e ripristina il flusso automatico
-                $State.ManualOverrideMode = $null
+            if ($State.ControlMode -eq 'Manual' -and $State.ManualOverrideMode -eq 3) {
+                $State.ResumeAutomaticRequested = $true
             } else {
                 $State.RequestedMode = 3
+                $State.RequestedModeSource = 'Tray'
             }
             try { $State.WakeSignal.Set() } catch { }
         }.GetNewClosure())
         [void]$menu.Items.Add($forcePerfItem)
+
+        $resumeAutoItem = [System.Windows.Forms.ToolStripMenuItem]::new("Riprendi automatico")
+        $resumeAutoItem.Enabled = $false
+        $resumeAutoItem.Add_Click({
+            $State.ResumeAutomaticRequested = $true
+            try { $State.WakeSignal.Set() } catch { }
+        }.GetNewClosure())
+        [void]$menu.Items.Add($resumeAutoItem)
 
         [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
 
@@ -438,6 +501,7 @@ public static class DpiHelper {
         $exitItem = [System.Windows.Forms.ToolStripMenuItem]::new("Esci")
         $exitItem.Add_Click({
             $State.RequestExit = $true
+            try { $State.WakeSignal.Set() } catch { }
             [System.Windows.Forms.Application]::Exit()
         }.GetNewClosure())
         [void]$menu.Items.Add($exitItem)
@@ -466,28 +530,45 @@ public static class DpiHelper {
             $charge = $State.ChargePercent
             $ac     = if ($State.IsOnAC) { "AC" } else { "Batteria" }
             $paused = $State.IsPaused
+            $controlMode = $State.ControlMode
 
-            $manualOverride = $State.ManualOverrideMode
+            $manualOverride = if ($controlMode -eq 'Manual') { $State.ManualOverrideMode } else { $null }
 
-            # Checkmark radio-style sui due item Forza X (solo uno selezionato alla volta)
-            $forceOptItem.Checked  = ($manualOverride -eq 2)
-            $forcePerfItem.Checked = ($manualOverride -eq 3)
+            # Checkmark radio-style sui menu Forza X (solo uno selezionato alla volta)
+            $forceNoNoiseItem.Checked = ($manualOverride -eq 0)
+            $forceSilentItem.Checked  = ($manualOverride -eq 1)
+            $forceOptItem.Checked     = ($manualOverride -eq 2)
+            $forcePerfItem.Checked    = ($manualOverride -eq 3)
+            $resumeAutoItem.Enabled   = ($controlMode -eq 'Manual' -and $null -ne $State.ManualOverrideMode)
 
             # Tooltip (max 127 caratteri per NotifyIcon.Text in .NET 2.0+)
             $tip = "Modalita': $mode`nCarica: $charge% ($ac)"
             if ($paused) { $tip += "`nSospeso" }
-            elseif ($null -ne $manualOverride) { $tip += "`nOverride manuale attivo" }
+            elseif ($null -ne $manualOverride) { $tip += "`nOverride manuale" }
+            else { $tip += "`nAutomatico" }
             if ($tip.Length -gt 127) { $tip = $tip.Substring(0, 127) }
             $notify.Text = $tip
 
             # Icona
-            if ($paused) { $notify.Icon = $iconPause }
-            elseif ($mode -eq 'Prestazioni Elevate') { $notify.Icon = $iconPerf }
-            else { $notify.Icon = $iconOpt }
+            if ($paused) {
+                $notify.Icon = $iconPause
+            }
+            elseif ($mode -eq 'Prestazioni Elevate') {
+                $notify.Icon = $iconPerf
+            }
+            elseif ($mode -eq 'Nessun rumore') {
+                $notify.Icon = $iconNoNoise
+            }
+            elseif ($mode -eq 'Silenzioso') {
+                $notify.Icon = $iconSilent
+            }
+            else {
+                $notify.Icon = $iconOpt
+            }
 
             # Status nel menu
             $statusItem.Text = "$mode | $charge% ($ac)" +
-                $(if ($paused) { " | Sospeso" } elseif ($null -ne $manualOverride) { " | Override" } else { "" })
+                $(if ($paused) { " | Sospeso" } elseif ($null -ne $manualOverride) { " | Override" } else { " | Automatico" })
 
             # Shutdown richiesto dal loop principale
             if ($State.RequestExit) { [System.Windows.Forms.Application]::Exit() }
@@ -516,7 +597,7 @@ public static class DpiHelper {
 }
 
 function Stop-TrayIcon {
-    try { $script:trayState.RequestExit = $true; Start-Sleep -Milliseconds 500 } catch { }
+    try { $script:trayState.RequestExit = $true } catch { }
     try { if ($script:_trayPS) { $script:_trayPS.Stop(); $script:_trayPS.Dispose() } } catch { }
     try { if ($script:_trayRS) { $script:_trayRS.Close(); $script:_trayRS.Dispose() } } catch { }
 }
@@ -552,8 +633,18 @@ function Update-PerformanceMode {
 
     # --- Rilevamento alimentazione AC (copertura completa) ---
     $isOnAC = $batteryStatus -in $AC_STATUSES
+    $controlMode = $script:trayState.ControlMode
+    if (-not $controlMode) {
+        $controlMode = 'Auto'
+        $script:trayState.ControlMode = 'Auto'
+    }
+    $manualOverride = $script:trayState.ManualOverrideMode
+    if ($null -ne $manualOverride -and $controlMode -ne 'Manual') {
+        $controlMode = 'Manual'
+        $script:trayState.ControlMode = 'Manual'
+    }
 
-    Write-Log "DEBUG [$Trigger] Stato: batteria=$statusName($batteryStatus), carica=$chargePercent%, AC=$isOnAC, limite=$chargeLimit%, modalita=$currentModeName($currentMode)"
+    Write-Log "DEBUG [$Trigger] Stato: batteria=$statusName($batteryStatus), carica=$chargePercent%, AC=$isOnAC, limite=$chargeLimit%, modalita=$currentModeName($currentMode), controllo=$controlMode"
 
     # Aggiorna stato condiviso per la System Tray
     $script:trayState.CurrentMode   = $currentModeName
@@ -567,11 +658,16 @@ function Update-PerformanceMode {
     }
 
     # Se l'utente ha forzato manualmente una modalita', rispettarla finche' non arriva un evento hardware
-    if ($null -ne $script:trayState.ManualOverrideMode) {
-        $overrideName = $MODE_NAMES[$script:trayState.ManualOverrideMode]
+    if ($controlMode -eq 'Manual' -and $null -ne $manualOverride) {
+        $overrideName = $MODE_NAMES[$manualOverride]
         if (-not $overrideName) { $overrideName = "$($script:trayState.ManualOverrideMode)" }
         Write-Log "DEBUG [$Trigger] Override manuale attivo ($overrideName), salto valutazione automatica."
         return
+    }
+    elseif ($controlMode -eq 'Manual' -and $null -eq $manualOverride) {
+        $script:trayState.ControlMode = 'Auto'
+        $script:trayState.ManualOverrideSource = $null
+        $script:trayState.ManualOverrideTimestamp = $null
     }
 
     # --- Logica decisionale con isteresi ---
@@ -791,8 +887,15 @@ try {
         $bat = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
         $startupSub = "Gestore avviato"
         if ($bat) { $startupSub += " — $($bat.EstimatedChargeRemaining)%" }
-        $startupGlyph = if ($modeAfterStartup -eq $MODE_HIGH_PERFORMANCE) { [char]0xE945 } else { [char]0xE946 }
-        $startupColor = if ($modeAfterStartup -eq $MODE_HIGH_PERFORMANCE) { "#FFAA2C" } else { "#60CDFF" }
+        $startupVisual = $MODE_VISUALS[$modeAfterStartup]
+        if (-not $startupVisual) {
+            $startupVisual = @{
+                Glyph = [char]0xE946
+                Color = "#60CDFF"
+            }
+        }
+        $startupGlyph = $startupVisual.Glyph
+        $startupColor = $startupVisual.Color
         Show-ModeNotification -ModeName $startupModeName -IconGlyph $startupGlyph -AccentColor $startupColor -Subtitle $startupSub
     }
 } catch {
@@ -813,8 +916,7 @@ while ($true) {
         $drainCount = 1
         while ($wakeSignal.WaitOne(0)) { $drainCount++ }
 
-        Write-Log "DEBUG Evento ricevuto dopo ${waitMs}ms (ciclo #$($script:loopCount), $drainCount segnale/i drenati). Stabilizzazione 2s..."
-        Start-Sleep -Seconds 2
+        Write-Log "DEBUG Evento ricevuto dopo ${waitMs}ms (ciclo #$($script:loopCount), $drainCount segnale/i drenati)."
         $trigger = 'evento'
     }
     else {
@@ -827,22 +929,62 @@ while ($true) {
         break
     }
 
-    $requestedMode = $script:trayState.RequestedMode
     $justForced = $false
+    $resumeRequested = $false
+    $modeBeforeResume = $null
+    if ($script:trayState.ResumeAutomaticRequested) {
+        $script:trayState.ResumeAutomaticRequested = $false
+        $resumeRequested = $true
+        $modeBeforeResume = Get-CurrentPerformanceMode
+        $script:trayState.RequestedMode = $null
+        $script:trayState.RequestedModeSource = $null
+        if ($script:trayState.ControlMode -ne 'Auto' -or $null -ne $script:trayState.ManualOverrideMode) {
+            Write-Log "INFO  [tray] Ripristino gestione automatica richiesto dall'utente."
+        }
+        else {
+            Write-Log "DEBUG [tray] Ripristino gestione automatica richiesto, gia' in automatico."
+        }
+        $script:trayState.ControlMode = 'Auto'
+        $script:trayState.ManualOverrideMode = $null
+        $script:trayState.ManualOverrideSource = $null
+        $script:trayState.ManualOverrideTimestamp = $null
+        $trigger = 'resume'
+    }
+
+    $requestedMode = $null
+    $requestedModeSource = $null
+    if (-not $resumeRequested) {
+        # TODO: quando verranno introdotte le hotkey, valorizzare RequestedMode/RequestedModeSource e WakeSignal.
+        $requestedMode = $script:trayState.RequestedMode
+        $requestedModeSource = $script:trayState.RequestedModeSource
+    }
+
     if ($null -ne $requestedMode) {
         $script:trayState.RequestedMode = $null
+        $script:trayState.RequestedModeSource = $null
         $reqModeName = $MODE_NAMES[$requestedMode]
         if ($reqModeName) {
+            $overrideSource = if ($requestedModeSource) { $requestedModeSource } else { 'Tray' }
             try {
                 Set-PerformanceMode -Mode $requestedMode
-                $glyph = if ($requestedMode -eq $MODE_HIGH_PERFORMANCE) { [char]0xE945 } else { [char]0xE946 }
-                $color  = if ($requestedMode -eq $MODE_HIGH_PERFORMANCE) { "#FFAA2C" } else { "#60CDFF" }
+                $visual = $MODE_VISUALS[$requestedMode]
+                if (-not $visual) {
+                    $visual = @{
+                        Glyph = [char]0xE946
+                        Color = "#60CDFF"
+                    }
+                }
+                $glyph = $visual.Glyph
+                $color = $visual.Color
                 Show-ModeNotification -ModeName $reqModeName -IconGlyph $glyph -AccentColor $color -Subtitle "Impostata manualmente"
                 Play-NotificationSound
                 $script:trayState.CurrentMode = $reqModeName
+                $script:trayState.ControlMode = 'Manual'
                 $script:trayState.ManualOverrideMode = $requestedMode
+                $script:trayState.ManualOverrideSource = $overrideSource
+                $script:trayState.ManualOverrideTimestamp = Get-Date
                 $justForced = $true
-                Write-Log "INFO  [tray] Modalita' forzata a $reqModeName dall'utente."
+                Write-Log "INFO  [tray] Modalita' forzata a $reqModeName dall'utente (sorgente=$overrideSource)."
             }
             catch {
                 Write-Log "ERROR [tray] Impossibile forzare modalita': $_"
@@ -857,7 +999,10 @@ while ($true) {
         $overrideName = $MODE_NAMES[$script:trayState.ManualOverrideMode]
         if (-not $overrideName) { $overrideName = "$($script:trayState.ManualOverrideMode)" }
         Write-Log "INFO  [evento] Override manuale ($overrideName) rimosso: ripresa gestione automatica."
+        $script:trayState.ControlMode = 'Auto'
         $script:trayState.ManualOverrideMode = $null
+        $script:trayState.ManualOverrideSource = $null
+        $script:trayState.ManualOverrideTimestamp = $null
     }
 
     try {
@@ -865,6 +1010,26 @@ while ($true) {
     }
     catch {
         Write-Log "ERROR [$trigger] Eccezione in Update-PerformanceMode: $_"
+    }
+
+    if ($resumeRequested) {
+        try {
+            $modeAfterResume = Get-CurrentPerformanceMode
+            if ($modeBeforeResume -eq $modeAfterResume) {
+                $resumeVisual = $MODE_VISUALS[$modeAfterResume]
+                if (-not $resumeVisual) {
+                    $resumeVisual = @{
+                        Glyph = [char]0xE946
+                        Color = "#60CDFF"
+                    }
+                }
+                Show-ModeNotification -ModeName "Automatico" -IconGlyph $resumeVisual.Glyph -AccentColor $resumeVisual.Color -Subtitle "Gestione automatica ripristinata"
+                Play-NotificationSound
+            }
+        }
+        catch {
+            Write-Log "WARN  [resume] Impossibile mostrare notifica di ripristino automatico: $_"
+        }
     }
 }
 

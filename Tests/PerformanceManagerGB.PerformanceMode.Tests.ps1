@@ -36,6 +36,22 @@ Describe 'PerformanceManagerGB - PerformanceMode' {
     # ===========================================================================
     Context 'Get-CurrentPerformanceMode' {
 
+        It 'restituisce 0 quando Value=0 nel registro (Nessun rumore)' {
+            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 0 } }
+
+            $result = Get-CurrentPerformanceMode
+
+            $result | Should -Be 0
+        }
+
+        It 'restituisce 1 quando Value=1 nel registro (Silenzioso)' {
+            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 1 } }
+
+            $result = Get-CurrentPerformanceMode
+
+            $result | Should -Be 1
+        }
+
         It 'restituisce 2 quando Value=2 nel registro' {
             Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 2 } }
 
@@ -71,6 +87,30 @@ Describe 'PerformanceManagerGB - PerformanceMode' {
 
     # ===========================================================================
     Context 'Set-PerformanceMode' {
+
+        It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=0 (Nessun rumore)' {
+            Mock Set-ItemProperty {}
+
+            Set-PerformanceMode -Mode 0
+
+            Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+                $Path  -eq $script:regPerformance -and
+                $Name  -eq 'Value'                 -and
+                $Value -eq 0
+            }
+        }
+
+        It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=1 (Silenzioso)' {
+            Mock Set-ItemProperty {}
+
+            Set-PerformanceMode -Mode 1
+
+            Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+                $Path  -eq $script:regPerformance -and
+                $Name  -eq 'Value'                 -and
+                $Value -eq 1
+            }
+        }
 
         It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=2' {
             Mock Set-ItemProperty {}
