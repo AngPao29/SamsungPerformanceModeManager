@@ -7,6 +7,9 @@ versioning secondo [Semantic Versioning](https://semver.org/).
 ---
 
 ## [Unreleased]
+### Added
+- Nuove modalità energetiche: Silenzioso e Nessun rumore
+- Nuova voce nella tray per Riprendi/Torna ad automatico dopo un override manuale
 
 ## [1.0.4] - 2026-03-04
 ### Fixed

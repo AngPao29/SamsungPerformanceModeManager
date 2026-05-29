@@ -11,8 +11,9 @@ Sei l'Orchestratore del ciclo di sviluppo del progetto PerformanceManagerGB. Coo
 ## Contesto del progetto
 Includi sempre questo nei prompt ai sub-agenti: PerformanceManagerGB.ps1, architettura event-driven con loop su $wakeSignal.WaitOne(), Runspace STA separati per UI, stato condiviso $script:trayState (Synchronized Hashtable), modalita' energetiche via registro Samsung, Mutex globale e handler ProcessExit.
 
-## Fase 0 - Classificazione della richiesta
-Prima di tutto, determina il tipo di task e le fasi da eseguire.
+## Pre-step - Classificazione della richiesta (non numerato)
+Prima di tutto, determina il tipo di task e le fasi da eseguire.  
+Questo è un pre-step fuori numerazione, compatibile con lo schema Fasi 1-4.
 
 ### Override espliciti
 - --no-tests -> ometti la Fase 4
@@ -37,6 +38,16 @@ Usa Architetto per produrre un piano operativo con TODO numerati.
 ### Fase 2 - Implementazione
 Usa Sviluppatore per implementare i TODO o il task diretto, a seconda che la Fase 1 sia stata eseguita.
 
+### Gate - Changelog obbligatorio (tra Fase 2 e Fase 3)
+Se il cambiamento è user-facing, richiedi l'aggiornamento di CHANGELOG.md sotto "## [Unreleased]" (Added/Changed/Fixed) prima di inviare alla review.  
+Se internal-only, indica esplicitamente "N/A (internal-only)" nel report.
+
+**Criteri operativi (user-facing vs internal-only):**
+- **User-facing**: modifica percepibile dall’utente o dal comportamento del sistema.
+  Esempi: nuova voce tray, nuove hotkey, cambi su notifiche/popup/suoni, cambi su modalità/registro Samsung, cambi su task pianificato/install/uninstall, bugfix che cambia comportamento.
+- **Internal-only**: nessun cambiamento funzionale osservabile dall’utente.
+  Esempi: refactor senza cambi funzionali, pulizia log, commenti, test only.
+
 ### Fase 3 - Review
 Usa Revisore per controllare il codice modificato. Se compaiono STOP, rimanda lo Sviluppatore per la correzione, massimo due iterazioni.
 
@@ -52,6 +63,7 @@ Produci sempre un report finale adattato alle fasi effettivamente eseguite.
 **Tipo:** [Nuova feature | Bugfix | Refactor | ...]
 **Fasi eseguite:** [es. 2 -> 3 | fasi saltate: 1 (bugfix), 4 (--no-tests)]
 ### Modifiche: [file e righe]
+### Changelog: aggiornato | N/A (internal-only)
 ### Review: STOP risolti [n] | WARN residui [elenco o "nessuno"]
 ### Test: [file creato e scenari coperti | "saltato - [motivo]"]
 ### Per testare: Stop-ScheduledTask / Start-ScheduledTask "Performance Manager for Galaxy Book"

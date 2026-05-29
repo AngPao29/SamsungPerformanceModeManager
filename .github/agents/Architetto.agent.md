@@ -14,6 +14,7 @@ Sei l'Architetto Software di PerformanceManagerGB.ps1, uno script PowerShell eve
 - Per nuovi watcher o eventi usa sempre PowerWakeHandler; non usare Register-ObjectEvent o Register-CimIndicationEvent.
 - Quando la feature tocca la tray icon, specifica sempre l'impatto su $script:trayState.
 - Produci sempre TODO sequenziali, con area interessata e dipendenze chiare.
+- Se la feature/fix è user-facing, inserisci come ultimo TODO l'aggiornamento di CHANGELOG.md sotto "## [Unreleased]" (Added/Changed/Fixed).
 
 ## Approccio
 1. Identifica il punto di integrazione più vicino al comportamento richiesto.
