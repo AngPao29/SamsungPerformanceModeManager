@@ -56,6 +56,26 @@ Il task pianificato punta direttamente a `C:\Scripts\PerformanceManagerGB.ps1`, 
 
 > Se modifichi anche `Installa-TaskPianificato.ps1` (es. parametri del task), riesegui lo script di installazione: sovrascriverà il task esistente.
 
+### Ciclo test locale (senza tag/push/IRM)
+
+Per iterare rapidamente in locale:
+
+1. **Esegui test Pester**:
+   ```powershell
+   Invoke-Pester -Path .\Tests -Output Detailed
+   ```
+2. **Aggiorna script usato dal task**:
+   ```powershell
+   Copy-Item .\PerformanceManagerGB.ps1 C:\Scripts\PerformanceManagerGB.ps1 -Force
+   ```
+3. **Riavvia task pianificato**:
+   ```powershell
+   Stop-ScheduledTask -TaskName "Performance Manager for Galaxy Book" -ErrorAction SilentlyContinue
+   Start-ScheduledTask -TaskName "Performance Manager for Galaxy Book"
+   ```
+
+Opzionale: crea una symlink/hardlink tra `C:\Scripts\PerformanceManagerGB.ps1` e file nel repo, così non serve `Copy-Item` a ogni modifica.
+
 ## Disinstallazione
 
 Esegui `Uninstall.ps1` come Amministratore:
