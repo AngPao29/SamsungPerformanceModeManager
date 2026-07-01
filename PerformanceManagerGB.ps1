@@ -209,6 +209,43 @@ function Set-PerformanceMode {
 }
 
 # ============================================================================
+# Funzione: applica una modalità e verifica che sia stata realmente impostata
+# ============================================================================ 
+function Invoke-ModeSelection {
+    param(
+        [int]$Mode,
+        [string]$Subtitle = '',
+        [switch]$PlaySound
+    )
+
+    Set-PerformanceMode -Mode $Mode
+
+    $appliedMode = Get-CurrentPerformanceMode
+    if ($appliedMode -ne $Mode) {
+        $expectedName = $MODE_NAMES[$Mode]
+        if (-not $expectedName) { $expectedName = "$Mode" }
+        $appliedName = $MODE_NAMES[$appliedMode]
+        if (-not $appliedName) { $appliedName = "$appliedMode" }
+        throw "Verifica applicazione fallita: richiesta=$expectedName($Mode), rilevata=$appliedName($appliedMode)."
+    }
+
+    $modeName = $MODE_NAMES[$Mode]
+    if (-not $modeName) { $modeName = "$Mode" }
+    $visual = $MODE_VISUALS[$Mode]
+    if (-not $visual) {
+        $visual = @{
+            Glyph = [char]0xE946
+            Color = "#60CDFF"
+        }
+    }
+
+    Show-ModeNotification -ModeName $modeName -IconGlyph $visual.Glyph -AccentColor $visual.Color -Subtitle $Subtitle
+    if ($PlaySound) {
+        Play-NotificationSound
+    }
+}
+
+# ============================================================================
 # Funzione: mostra un overlay OSD (stile Samsung Fn+F11) al cambio modalità
 # Viene eseguito in un runspace STA separato, non blocca il loop principale.
 # ============================================================================
@@ -677,9 +714,7 @@ function Update-PerformanceMode {
     # L'isteresi evita toggle rapidi quando la carica oscilla di 1-2% intorno al limite.
     if ($isOnAC -and ($chargePercent -ge ($chargeLimit - $chargeTolerance))) {
         if ($currentMode -ne $MODE_HIGH_PERFORMANCE) {
-            Set-PerformanceMode -Mode $MODE_HIGH_PERFORMANCE
-            Show-ModeNotification -ModeName "Prestazioni Elevate" -IconGlyph ([char]0xE945) -AccentColor "#FFAA2C" -Subtitle "$statusName · $chargePercent% — Soglia raggiunta"
-            Play-NotificationSound
+            Invoke-ModeSelection -Mode $MODE_HIGH_PERFORMANCE -Subtitle "$statusName · $chargePercent% — Soglia raggiunta" -PlaySound
             Write-Log "INFO  [$Trigger] Modalita' -> PRESTAZIONI ELEVATE (AC=$isOnAC, carica $chargePercent% >= limite $chargeLimit% - tolleranza $chargeTolerance%)"
         }
         else {
@@ -689,10 +724,8 @@ function Update-PerformanceMode {
     elseif ((-not $isOnAC) -or ($chargePercent -lt ($chargeLimit - $hysteresisMargin))) {
         # Non su AC, oppure carica scesa sotto la soglia di isteresi
         if ($currentMode -ne $MODE_OPTIMIZED) {
-            Set-PerformanceMode -Mode $MODE_OPTIMIZED
             $reason = if (-not $isOnAC) { "Scollegato da corrente" } else { "Carica sotto soglia" }
-            Show-ModeNotification -ModeName "Ottimizzata" -IconGlyph ([char]0xE946) -AccentColor "#60CDFF" -Subtitle "$statusName · $chargePercent% — $reason"
-            Play-NotificationSound
+            Invoke-ModeSelection -Mode $MODE_OPTIMIZED -Subtitle "$statusName · $chargePercent% — $reason" -PlaySound
             Write-Log "INFO  [$Trigger] Modalita' -> OTTIMIZZATA (batteria=$statusName, carica $chargePercent%, limite $chargeLimit%, isteresi $hysteresisMargin%)"
         }
         else {
@@ -966,18 +999,7 @@ while ($true) {
         if ($reqModeName) {
             $overrideSource = if ($requestedModeSource) { $requestedModeSource } else { 'Tray' }
             try {
-                Set-PerformanceMode -Mode $requestedMode
-                $visual = $MODE_VISUALS[$requestedMode]
-                if (-not $visual) {
-                    $visual = @{
-                        Glyph = [char]0xE946
-                        Color = "#60CDFF"
-                    }
-                }
-                $glyph = $visual.Glyph
-                $color = $visual.Color
-                Show-ModeNotification -ModeName $reqModeName -IconGlyph $glyph -AccentColor $color -Subtitle "Impostata manualmente"
-                Play-NotificationSound
+                Invoke-ModeSelection -Mode $requestedMode -Subtitle "Impostata manualmente" -PlaySound
                 $script:trayState.CurrentMode = $reqModeName
                 $script:trayState.ControlMode = 'Manual'
                 $script:trayState.ManualOverrideMode = $requestedMode

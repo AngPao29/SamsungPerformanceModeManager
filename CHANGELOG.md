@@ -11,6 +11,9 @@ versioning secondo [Semantic Versioning](https://semver.org/).
 - Nuove modalità energetiche: Silenzioso e Nessun rumore
 - Nuova voce nella tray per Riprendi/Torna ad automatico dopo un override manuale
 
+### Fixed
+- Il comando "Forza modalità" dalla tray ora usa lo stesso percorso di applicazione della logica automatica e verifica la modalità realmente impostata prima di aggiornare UI/stato
+
 ## [1.0.4] - 2026-03-04
 ### Fixed
 - "Forza Ottimizzata" e "Forza Prestazioni Elevate" ora applicano la modalità istantaneamente: i click handler segnalano il `WakeSignal` condiviso, risvegliando immediatamente il loop principale invece di attendere il prossimo ciclo di polling (30 s)
