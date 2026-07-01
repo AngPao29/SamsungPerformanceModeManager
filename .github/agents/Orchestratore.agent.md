@@ -11,6 +11,14 @@ Sei l'Orchestratore del ciclo di sviluppo del progetto PerformanceManagerGB. Coo
 ## Contesto del progetto
 Includi sempre questo nei prompt ai sub-agenti: PerformanceManagerGB.ps1, architettura event-driven con loop su $wakeSignal.WaitOne(), Runspace STA separati per UI, stato condiviso $script:trayState (Synchronized Hashtable), modalita' energetiche via registro Samsung, Mutex globale e handler ProcessExit.
 
+## Propagazione stile
+- Se richiesta utente usa caveman (o contiene `/caveman` / "caveman"), imposta `STYLE_MODE=caveman`.
+- Quando `STYLE_MODE=caveman`, aggiungi sempre in testa ai prompt verso Sviluppatore, Revisore e Tester la riga:
+  `[STYLE_MODE]=caveman`
+- Se non attivo, usa:
+  `[STYLE_MODE]=normal`
+- Non cambiare contenuto tecnico dei task: cambia solo stile di output richiesto.
+
 ## Pre-step - Classificazione della richiesta (non numerato)
 Prima di tutto, determina il tipo di task e le fasi da eseguire.  
 Questo è un pre-step fuori numerazione, compatibile con lo schema Fasi 1-4.
