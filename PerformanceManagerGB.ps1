@@ -43,6 +43,14 @@ $MODE_NAMES = @{
     $MODE_HIGH_PERFORMANCE = 'Prestazioni Elevate'
 }
 
+# --- Mappa attesa PL1 (W) per modalità Samsung ---
+$MODE_EXPECTED_PL1_W = @{
+    $MODE_NO_NOISE         = 8
+    $MODE_SILENT           = 18
+    $MODE_OPTIMIZED        = 25
+    $MODE_HIGH_PERFORMANCE = 25
+}
+
 # --- Mappa visual per notifiche (glyph + colore) ---
 $MODE_VISUALS = @{
     $MODE_NO_NOISE = @{
@@ -93,6 +101,11 @@ $hysteresisMargin = 3
 # ~1% sotto il limite impostato (es. 79% con limite 80%). Questa tolleranza
 # permette allo script di riconoscere la carica come "limite raggiunto".
 $chargeTolerance = 1
+
+# --- Verifica PL1 dopo cambio modalità ---
+$pl1VerifyMaxAttempts = 5
+$pl1VerifyRetryDelayMs = 300
+$script:_pl1TelemetryCimCandidates = $null
 
 # --- Intervallo di polling (secondi) ---
 $pollInterval = 30
@@ -209,6 +222,160 @@ function Set-PerformanceMode {
 }
 
 # ============================================================================
+# Funzione: restituisce PL1 atteso per una modalità Samsung
+# ============================================================================
+function Get-ExpectedModePl1W {
+    param([int]$Mode)
+    return $MODE_EXPECTED_PL1_W[$Mode]
+}
+
+# ============================================================================
+# Funzione: telemetria PL1 dinamica (mockabile in test)
+# Restituisce sempre: Available, Pl1W, Source, Error
+# ============================================================================
+function Convert-ToPl1Watts {
+    param([object]$RawValue)
+
+    if ($null -eq $RawValue) { return $null }
+
+    $numeric = 0.0
+    $rawText = [string]$RawValue
+    if (-not [double]::TryParse($rawText, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$numeric)) {
+        if (-not [double]::TryParse($rawText, [ref]$numeric)) {
+            return $null
+        }
+    }
+
+    if ($numeric -le 0) { return $null }
+    if ($numeric -gt 1000) { $numeric = $numeric / 1000.0 }  # mW -> W
+    if ($numeric -gt 300) { return $null }                   # filtro valori implausibili
+
+    return [Math]::Round($numeric, 1)
+}
+
+function Get-Pl1TelemetryFromCimRuntime {
+    $propertyRegex = '(?i)(PL1|Long.*Term.*Power.*Limit|PowerLimit1|Package.*Power.*Limit)'
+
+    if ($null -eq $script:_pl1TelemetryCimCandidates) {
+        $script:_pl1TelemetryCimCandidates = @()
+        foreach ($namespace in @('root\wmi', 'root\Intel')) {
+            try {
+                $classes = Get-CimClass -Namespace $namespace -ClassName '*Power*Limit*' -ErrorAction Stop
+                foreach ($class in $classes) {
+                    foreach ($property in $class.CimClassProperties) {
+                        if ($property.Name -match $propertyRegex) {
+                            $script:_pl1TelemetryCimCandidates += [PSCustomObject]@{
+                                Namespace = $namespace
+                                ClassName = $class.CimClassName
+                                Property  = $property.Name
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+    }
+
+    foreach ($candidate in $script:_pl1TelemetryCimCandidates) {
+        try {
+            $instance = Get-CimInstance -Namespace $candidate.Namespace -ClassName $candidate.ClassName -ErrorAction Stop | Select-Object -First 1
+            if ($null -eq $instance) { continue }
+
+            $pl1W = Convert-ToPl1Watts -RawValue $instance.($candidate.Property)
+            if ($null -eq $pl1W) { continue }
+
+            return [PSCustomObject]@{
+                Available  = $true
+                Verifiable = $true
+                Pl1W       = $pl1W
+                Source     = "CIM:$($candidate.Namespace):$($candidate.ClassName).$($candidate.Property)"
+                Error      = $null
+            }
+        }
+        catch { }
+    }
+
+    return $null
+}
+
+function Get-Pl1TelemetryFromSamsungRegistry {
+    $nameRegex = '(?i)(PL1|LongTerm|PowerLimit)'
+    $paths = @($regPerformance)
+
+    try {
+        $children = Get-ChildItem -Path $regPerformance -ErrorAction Stop
+        foreach ($child in $children) {
+            $paths += $child.PSPath
+        }
+    }
+    catch { }
+
+    foreach ($path in $paths) {
+        try {
+            $item = Get-ItemProperty -Path $path -ErrorAction Stop
+            foreach ($prop in $item.PSObject.Properties) {
+                if ($prop.Name -in @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider')) { continue }
+                if ($prop.Name -notmatch $nameRegex) { continue }
+
+                $pl1W = Convert-ToPl1Watts -RawValue $prop.Value
+                if ($null -eq $pl1W) { continue }
+
+                return [PSCustomObject]@{
+                    Available  = $false
+                    Verifiable = $false
+                    Pl1W       = $pl1W
+                    Source     = "SamsungRegistry:$path\$($prop.Name)"
+                    Error      = 'Valore configurazione rilevato, ma non verificabile come PL1 runtime attivo.'
+                }
+            }
+        }
+        catch { }
+    }
+
+    return $null
+}
+
+function Get-DynamicPl1Telemetry {
+    try {
+        $cimTelemetry = Get-Pl1TelemetryFromCimRuntime
+        if ($null -ne $cimTelemetry) {
+            return $cimTelemetry
+        }
+
+        $registryTelemetry = Get-Pl1TelemetryFromSamsungRegistry
+        if ($null -ne $registryTelemetry) {
+            return $registryTelemetry
+        }
+
+        return [PSCustomObject]@{
+            Available = $false
+            Pl1W      = $null
+            Verifiable = $false
+            Source    = 'NotVerifiable'
+            Error     = 'Nessuna sorgente PL1 runtime disponibile (CIM/registro Samsung).'
+        }
+    }
+    catch {
+        return [PSCustomObject]@{
+            Available = $false
+            Pl1W      = $null
+            Verifiable = $false
+            Source    = 'TelemetryError'
+            Error     = "$_"
+        }
+    }
+}
+
+# ============================================================================
+# Funzione: delay retry verifica PL1 (mockabile in test)
+# ============================================================================
+function Wait-Pl1VerificationDelay {
+    param([int]$Milliseconds)
+    Start-Sleep -Milliseconds $Milliseconds
+}
+
+# ============================================================================
 # Funzione: applica una modalità e verifica che sia stata realmente impostata
 # ============================================================================ 
 function Invoke-ModeSelection {
@@ -227,6 +394,40 @@ function Invoke-ModeSelection {
         $appliedName = $MODE_NAMES[$appliedMode]
         if (-not $appliedName) { $appliedName = "$appliedMode" }
         throw "Verifica applicazione fallita: richiesta=$expectedName($Mode), rilevata=$appliedName($appliedMode)."
+    }
+
+    $expectedPl1W = Get-ExpectedModePl1W -Mode $Mode
+    if ($null -ne $expectedPl1W) {
+        $telemetry = Get-DynamicPl1Telemetry
+        $supportsVerifiableFlag = $telemetry.PSObject.Properties.Name -contains 'Verifiable'
+        $isVerifiableTelemetry = $telemetry.Available -and ((-not $supportsVerifiableFlag) -or $telemetry.Verifiable)
+
+        if ($isVerifiableTelemetry) {
+            $verified = $false
+            for ($attempt = 1; $attempt -le $pl1VerifyMaxAttempts; $attempt++) {
+                if ($telemetry.Pl1W -eq $expectedPl1W) {
+                    $verified = $true
+                    Write-Log "DEBUG Verifica PL1 OK: modalita=$Mode, PL1=${expectedPl1W}W, sorgente=$($telemetry.Source), tentativo=$attempt."
+                    break
+                }
+
+                if ($attempt -lt $pl1VerifyMaxAttempts) {
+                    Wait-Pl1VerificationDelay -Milliseconds $pl1VerifyRetryDelayMs
+                    $telemetry = Get-DynamicPl1Telemetry
+                }
+            }
+
+            if (-not $verified) {
+                $actualPl1Text = if ($null -ne $telemetry.Pl1W) { "$($telemetry.Pl1W)W" } else { 'n/d' }
+                throw "Verifica PL1 fallita: modalita=$Mode, atteso=${expectedPl1W}W, rilevato=$actualPl1Text, sorgente=$($telemetry.Source), errore=$($telemetry.Error)."
+            }
+        }
+        elseif ($null -ne $telemetry.Pl1W) {
+            Write-Log "WARN  Telemetria PL1 non verificabile runtime: valore=$($telemetry.Pl1W)W, modalita=$Mode, sorgente=$($telemetry.Source), dettaglio=$($telemetry.Error)."
+        }
+        else {
+            Write-Log "WARN  Telemetria PL1 non disponibile: salto verifica (modalita=$Mode, sorgente=$($telemetry.Source), errore=$($telemetry.Error))."
+        }
     }
 
     $modeName = $MODE_NAMES[$Mode]
@@ -1063,6 +1264,18 @@ catch {
 finally {
     # Rilascio di tutte le risorse in ogni caso (chiusura, Ctrl+C, errore fatale)
     try { Stop-TrayIcon } catch { }
+    try {
+        if ($script:_notifPS) {
+            try { $script:_notifPS.Stop() } catch { }
+            try { $script:_notifPS.Dispose() } catch { }
+            $script:_notifPS = $null
+        }
+        if ($script:_notifRS) {
+            try { $script:_notifRS.Close() } catch { }
+            try { $script:_notifRS.Dispose() } catch { }
+            $script:_notifRS = $null
+        }
+    } catch { }
     try {
         if ($eventLogWatcher) {
             $eventLogWatcher.Enabled = $false

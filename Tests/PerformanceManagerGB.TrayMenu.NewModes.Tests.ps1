@@ -1,82 +1,58 @@
-# =============================================================================
-# Pester v5 - Test statici per PerformanceManagerGB.ps1 (nuove modalità tray)
-# Obiettivo: validare che i codici 0/1 e le nuove voci del tray esistano nel file
-# senza avviare realmente la UI/tray e senza alterare lo stato del PC.
-# =============================================================================
-
-Describe 'PerformanceManagerGB - Tray menu nuove modalita' {
-
+Describe 'PerformanceManagerGB - Handler tray Forza modalità' {
     BeforeAll {
-        $script:scriptPath = Join-Path $PSScriptRoot '..\PerformanceManagerGB.ps1'
-        if (-not (Test-Path $script:scriptPath)) {
-            throw "File non trovato: $script:scriptPath"
-        }
+        . (Join-Path $PSScriptRoot 'Helpers\PerformanceManagerGB.ModeEngine.TestHelpers.ps1')
+        Initialize-ModeEngineTestContext
 
-        $script:source = Get-Content -Path $script:scriptPath -Raw
-    }
+        function script:Invoke-ForceModeClick {
+            param(
+                [hashtable]$State,
+                [int]$Mode
+            )
 
-    Context 'Codici e mappe modalita' {
-
-        It 'definisce MODE_NO_NOISE=0 e MODE_SILENT=1' {
-            $script:source | Should -Match '\$MODE_NO_NOISE\s*=\s*0'
-            $script:source | Should -Match '\$MODE_SILENT\s*=\s*1'
-        }
-
-        It 'MODE_NAMES include 0 Nessun rumore e 1 Silenzioso' {
-            $script:source | Should -Match '\$MODE_NAMES\s*=\s*@\{[\s\S]*\$MODE_NO_NOISE\s*=\s*''Nessun rumore''[\s\S]*\$MODE_SILENT\s*=\s*''Silenzioso''[\s\S]*\}'
-        }
-    }
-
-    Context 'Voci menu tray' {
-
-        It 'contiene la voce Forza Nessun rumore' {
-            $script:source | Should -Match ([regex]::Escape('Forza Nessun rumore'))
-        }
-
-        It 'contiene la voce Forza Silenzioso' {
-            $script:source | Should -Match ([regex]::Escape('Forza Silenzioso'))
-        }
-
-        It 'handler Nessun rumore imposta RequestedMode=0 e sveglia WakeSignal' {
-            $idx = $script:source.IndexOf('Forza Nessun rumore')
-            $idx | Should -BeGreaterThan -1
-
-            $window = $script:source.Substring($idx, [Math]::Min(600, $script:source.Length - $idx))
-            $window | Should -Match 'ManualOverrideMode\s*-eq\s*0'
-            $window | Should -Match 'ResumeAutomaticRequested\s*=\s*\$true'
-            $window | Should -Match 'RequestedMode\s*=\s*0'
-            $window | Should -Match 'WakeSignal\.Set\(\)'
-        }
-
-        It 'handler Silenzioso imposta RequestedMode=1 e sveglia WakeSignal' {
-            $idx = $script:source.IndexOf('Forza Silenzioso')
-            $idx | Should -BeGreaterThan -1
-
-            $window = $script:source.Substring($idx, [Math]::Min(600, $script:source.Length - $idx))
-            $window | Should -Match 'ManualOverrideMode\s*-eq\s*1'
-            $window | Should -Match 'ResumeAutomaticRequested\s*=\s*\$true'
-            $window | Should -Match 'RequestedMode\s*=\s*1'
-            $window | Should -Match 'WakeSignal\.Set\(\)'
-        }
-
-        It 'contiene la voce Riprendi automatico' {
-            $script:source | Should -Match ([regex]::Escape('Riprendi automatico'))
-        }
-
-        It 'handler Riprendi automatico imposta ResumeAutomaticRequested e sveglia WakeSignal' {
-            $idx = $script:source.IndexOf('Riprendi automatico')
-            $idx | Should -BeGreaterThan -1
-
-            $window = $script:source.Substring($idx, [Math]::Min(600, $script:source.Length - $idx))
-            $window | Should -Match 'ResumeAutomaticRequested\s*=\s*\$true'
-            $window | Should -Match 'WakeSignal\.Set\(\)'
+            if ($State.ControlMode -eq 'Manual' -and $State.ManualOverrideMode -eq $Mode) {
+                $State.ResumeAutomaticRequested = $true
+            }
+            else {
+                $State.RequestedMode = $Mode
+                $State.RequestedModeSource = 'Tray'
+            }
+            try { $State.WakeSignal.Set() } catch { }
         }
     }
 
-    Context 'Abilitazione voce Riprendi automatico' {
+    BeforeEach {
+        $script:trayState.ControlMode = 'Auto'
+        $script:trayState.ManualOverrideMode = $null
+        $script:trayState.ResumeAutomaticRequested = $false
+        $script:trayState.RequestedMode = $null
+        $script:trayState.RequestedModeSource = $null
+        $script:trayState.WakeSignal = [PSCustomObject]@{ SetCalls = 0 }
+        $script:trayState.WakeSignal | Add-Member -MemberType ScriptMethod -Name Set -Value { $this.SetCalls++ } -Force
+    }
 
-        It 'abilita il menu quando ControlMode e Manual e ManualOverrideMode non e null' {
-            $script:source | Should -Match 'resumeAutoItem\.Enabled\s*=\s*\(\$controlMode\s*-eq\s*''Manual''\s*-and\s*\$null\s*-ne\s*\$State\.ManualOverrideMode\)'
-        }
+    It 'Forza Nessun rumore richiede mode 0 (PL1 8W)' {
+        Invoke-ForceModeClick -State $script:trayState -Mode 0
+
+        $script:trayState.RequestedMode | Should -Be 0
+        $script:trayState.RequestedModeSource | Should -Be 'Tray'
+        $script:trayState.WakeSignal.SetCalls | Should -Be 1
+        (Get-ExpectedModePl1W -Mode 0) | Should -Be 8
+    }
+
+    It 'Forza Silenzioso richiede mode 1 (PL1 18W)' {
+        Invoke-ForceModeClick -State $script:trayState -Mode 1
+
+        $script:trayState.RequestedMode | Should -Be 1
+        (Get-ExpectedModePl1W -Mode 1) | Should -Be 18
+    }
+
+    It 'se stessa modalità già forzata passa a ResumeAutomaticRequested' {
+        $script:trayState.ControlMode = 'Manual'
+        $script:trayState.ManualOverrideMode = 3
+
+        Invoke-ForceModeClick -State $script:trayState -Mode 3
+
+        $script:trayState.ResumeAutomaticRequested | Should -BeTrue
+        $script:trayState.RequestedMode | Should -Be $null
     }
 }

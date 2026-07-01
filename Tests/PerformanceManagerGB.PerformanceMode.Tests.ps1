@@ -1,153 +1,103 @@
-# =============================================================================
-# Pester v5 - Test per PerformanceManagerGB.ps1
-# Funzioni coperte:
-#   - Get-CurrentPerformanceMode
-#   - Set-PerformanceMode
-#
-# Esecuzione:
-#   Invoke-Pester -Path 'C:\Scripts\Tests\' -Output Detailed
-#
-# NON richiede privilegi di amministratore.
-# NON accede al registro reale: usa Mock di Pester.
-# =============================================================================
-
-Describe 'PerformanceManagerGB - PerformanceMode' {
-
+Describe 'PerformanceManagerGB - Apply mode con verifica PL1' {
     BeforeAll {
-        $script:regPerformance        = 'HKLM:\SOFTWARE\Samsung\SamsungSettings\ModulePerformance'
-        $script:MODE_OPTIMIZED        = 2
-        $script:MODE_HIGH_PERFORMANCE = 3
+        . (Join-Path $PSScriptRoot 'Helpers\PerformanceManagerGB.ModeEngine.TestHelpers.ps1')
+        Initialize-ModeEngineTestContext
+    }
 
-        function script:Get-CurrentPerformanceMode {
-            try {
-                return [int](Get-ItemProperty -Path $script:regPerformance -ErrorAction Stop).Value
-            }
-            catch {
-                return $null
-            }
-        }
-
-        function script:Set-PerformanceMode {
-            param([int]$Mode)
-            Set-ItemProperty -Path $script:regPerformance -Name 'Value' -Value $Mode -ErrorAction Stop
+    BeforeEach {
+        Mock Set-PerformanceMode {}
+        Mock Show-ModeNotification {}
+        Mock Play-NotificationSound {}
+        Mock Write-Log {}
+        Mock Wait-Pl1VerificationDelay {}
+        Mock Get-CurrentPerformanceMode { return 2 }
+        Mock Get-DynamicPl1Telemetry {
+            [PSCustomObject]@{ Available = $false; Pl1W = $null; Source = 'NotAvailable'; Error = $null }
         }
     }
 
-    # ===========================================================================
-    Context 'Get-CurrentPerformanceMode' {
-
-        It 'restituisce 0 quando Value=0 nel registro (Nessun rumore)' {
-            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 0 } }
-
-            $result = Get-CurrentPerformanceMode
-
-            $result | Should -Be 0
-        }
-
-        It 'restituisce 1 quando Value=1 nel registro (Silenzioso)' {
-            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 1 } }
-
-            $result = Get-CurrentPerformanceMode
-
-            $result | Should -Be 1
-        }
-
-        It 'restituisce 2 quando Value=2 nel registro' {
-            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 2 } }
-
-            $result = Get-CurrentPerformanceMode
-
-            $result | Should -Be 2
-        }
-
-        It 'restituisce 3 quando Value=3 nel registro' {
-            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 3 } }
-
-            $result = Get-CurrentPerformanceMode
-
-            $result | Should -Be 3
-        }
-
-        It 'restituisce $null se il registro non esiste (eccezione)' {
-            Mock Get-ItemProperty { throw 'Chiave di registro non trovata.' }
-
-            $result = Get-CurrentPerformanceMode
-
-            $result | Should -BeNullOrEmpty
-        }
-
-        It 'il valore restituito e di tipo [int] quando la chiave esiste' {
-            Mock Get-ItemProperty { return [PSCustomObject]@{ Value = 2 } }
-
-            $result = Get-CurrentPerformanceMode
-
-            $result | Should -BeOfType [int]
+    Context 'Mapping modalità -> PL1 atteso' {
+        It 'usa 8/18/25/25 per modalità 0/1/2/3' {
+            (Get-ExpectedModePl1W -Mode 0) | Should -Be 8
+            (Get-ExpectedModePl1W -Mode 1) | Should -Be 18
+            (Get-ExpectedModePl1W -Mode 2) | Should -Be 25
+            (Get-ExpectedModePl1W -Mode 3) | Should -Be 25
         }
     }
 
-    # ===========================================================================
-    Context 'Set-PerformanceMode' {
+    Context 'Invoke-ModeSelection' {
+        It 'scrive registro e valida readback modalità' {
+            Mock Get-CurrentPerformanceMode { return 3 }
 
-        It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=0 (Nessun rumore)' {
-            Mock Set-ItemProperty {}
+            Invoke-ModeSelection -Mode 3 -Subtitle 'test'
 
-            Set-PerformanceMode -Mode 0
+            Should -Invoke Set-PerformanceMode -Times 1 -ParameterFilter { $Mode -eq 3 }
+            Should -Invoke Get-CurrentPerformanceMode -Times 1
+        }
 
-            Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-                $Path  -eq $script:regPerformance -and
-                $Name  -eq 'Value'                 -and
-                $Value -eq 0
+        It 'fallisce se readback modalità non corrisponde' {
+            Mock Get-CurrentPerformanceMode { return 2 }
+
+            { Invoke-ModeSelection -Mode 3 } | Should -Throw 'Verifica applicazione fallita*'
+            Should -Invoke Show-ModeNotification -Times 0
+        }
+
+        It 'con telemetria non disponibile non blocca il successo' {
+            Mock Get-CurrentPerformanceMode { return 1 }
+            Mock Get-DynamicPl1Telemetry {
+                [PSCustomObject]@{ Available = $false; Pl1W = $null; Source = 'Mock'; Error = $null }
             }
+
+            { Invoke-ModeSelection -Mode 1 } | Should -Not -Throw
+            Should -Invoke Show-ModeNotification -Times 1
         }
 
-        It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=1 (Silenzioso)' {
-            Mock Set-ItemProperty {}
-
-            Set-PerformanceMode -Mode 1
-
-            Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-                $Path  -eq $script:regPerformance -and
-                $Name  -eq 'Value'                 -and
-                $Value -eq 1
+        It 'con telemetria non verificabile non blocca il successo' {
+            Mock Get-CurrentPerformanceMode { return 1 }
+            Mock Get-DynamicPl1Telemetry {
+                [PSCustomObject]@{ Available = $true; Verifiable = $false; Pl1W = 18; Source = 'Mock'; Error = 'NotVerifiable' }
             }
+
+            { Invoke-ModeSelection -Mode 1 } | Should -Not -Throw
+            Should -Invoke Show-ModeNotification -Times 1
+            Should -Invoke Write-Log -Times 1 -ParameterFilter { $Message -like 'WARN  Telemetria PL1 non verificabile runtime*' }
         }
 
-        It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=2' {
-            Mock Set-ItemProperty {}
-
-            Set-PerformanceMode -Mode 2
-
-            Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-                $Path  -eq $script:regPerformance -and
-                $Name  -eq 'Value'                 -and
-                $Value -eq 2
+        It 'con telemetria disponibile valida PL1 atteso (8/18/25/25)' {
+            Mock Get-CurrentPerformanceMode { return 0 }
+            Mock Get-DynamicPl1Telemetry {
+                [PSCustomObject]@{ Available = $true; Pl1W = 8; Source = 'Mock'; Error = $null }
             }
+
+            { Invoke-ModeSelection -Mode 0 } | Should -Not -Throw
+            Should -Invoke Get-DynamicPl1Telemetry -Times 1
         }
 
-        It 'chiama Set-ItemProperty con Path corretto, Name=Value e Value=3' {
-            Mock Set-ItemProperty {}
-
-            Set-PerformanceMode -Mode 3
-
-            Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-                $Path  -eq $script:regPerformance -and
-                $Name  -eq 'Value'                 -and
-                $Value -eq 3
+        It 'retry telemetria e poi successo se PL1 converge' {
+            Mock Get-CurrentPerformanceMode { return 2 }
+            $script:callCount = 0
+            Mock Get-DynamicPl1Telemetry {
+                $script:callCount++
+                if ($script:callCount -lt 3) {
+                    return [PSCustomObject]@{ Available = $true; Pl1W = 18; Source = 'Mock'; Error = $null }
+                }
+                return [PSCustomObject]@{ Available = $true; Pl1W = 25; Source = 'Mock'; Error = $null }
             }
+
+            { Invoke-ModeSelection -Mode 2 } | Should -Not -Throw
+            Should -Invoke Wait-Pl1VerificationDelay -Times 2
+            Should -Invoke Get-DynamicPl1Telemetry -Times 3
         }
 
-        It 'propaga le eccezioni lanciate da Set-ItemProperty (non le silenzia)' {
-            Mock Set-ItemProperty { throw 'Accesso al registro negato.' }
+        It 'su mismatch PL1 genera errore esplicito e non notifica successo' {
+            Mock Get-CurrentPerformanceMode { return 3 }
+            Mock Get-DynamicPl1Telemetry {
+                [PSCustomObject]@{ Available = $true; Pl1W = 18; Source = 'Mock'; Error = 'Mismatch' }
+            }
 
-            { Set-PerformanceMode -Mode 2 } | Should -Throw 'Accesso al registro negato.'
-        }
-
-        It 'chiama Set-ItemProperty esattamente 1 volta per singola invocazione' {
-            Mock Set-ItemProperty {}
-
-            Set-PerformanceMode -Mode 2
-
-            Should -Invoke Set-ItemProperty -Exactly 1
+            { Invoke-ModeSelection -Mode 3 } | Should -Throw 'Verifica PL1 fallita*'
+            Should -Invoke Show-ModeNotification -Times 0
+            Should -Invoke Play-NotificationSound -Times 0
         }
     }
 }

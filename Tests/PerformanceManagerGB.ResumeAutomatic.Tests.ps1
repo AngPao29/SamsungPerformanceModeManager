@@ -1,14 +1,10 @@
-Describe 'PerformanceManagerGB - Ripristino automatico dalla tray' {
+Describe 'PerformanceManagerGB - Percorso forzato e ripristino automatico' {
     BeforeAll {
-        function script:New-TestWakeSignal {
-            $signal = New-Object PSObject -Property @{ SetCalls = 0 }
-            $signal | Add-Member -MemberType ScriptMethod -Name Set -Value { $this.SetCalls++ }
-            return $signal
-        }
+        . (Join-Path $PSScriptRoot 'Helpers\PerformanceManagerGB.ModeEngine.TestHelpers.ps1')
+        Initialize-ModeEngineTestContext
 
         function script:Invoke-ResumeAutoClick {
             param([hashtable]$State)
-
             $State.ResumeAutomaticRequested = $true
             try { $State.WakeSignal.Set() } catch { }
         }
@@ -17,9 +13,7 @@ Describe 'PerformanceManagerGB - Ripristino automatico dalla tray' {
             param([hashtable]$State)
 
             $trigger = 'polling'
-            $justForced = $false
             $resumeRequested = $false
-
             if ($State.ResumeAutomaticRequested) {
                 $State.ResumeAutomaticRequested = $false
                 $resumeRequested = $true
@@ -32,50 +26,16 @@ Describe 'PerformanceManagerGB - Ripristino automatico dalla tray' {
                 $trigger = 'resume'
             }
 
-            $requestedMode = $null
-            $requestedModeSource = $null
-            if (-not $resumeRequested) {
+            if (-not $resumeRequested -and $null -ne $State.RequestedMode) {
                 $requestedMode = $State.RequestedMode
-                $requestedModeSource = $State.RequestedModeSource
-            }
-
-            if ($null -ne $requestedMode) {
+                $requestedSource = $State.RequestedModeSource
                 $State.RequestedMode = $null
                 $State.RequestedModeSource = $null
-                Set-PerformanceMode -Mode $requestedMode
-                $State.ControlMode = 'Manual'
-                $State.ManualOverrideMode = $requestedMode
-                $State.ManualOverrideSource = $requestedModeSource
-                $State.ManualOverrideTimestamp = Get-Date
-                $justForced = $true
+                [void](Invoke-ForcedModeRequest -RequestedMode $requestedMode -RequestedModeSource $requestedSource)
             }
 
             Update-PerformanceMode -Trigger $trigger
-
-            [PSCustomObject]@{
-                Trigger = $trigger
-                ResumeRequested = $resumeRequested
-                JustForced = $justForced
-            }
-        }
-
-        function script:Set-PerformanceMode {
-            param([int]$Mode)
-        }
-
-        function script:Update-PerformanceMode {
-            param([string]$Trigger)
-        }
-
-        $script:trayState = @{
-            ControlMode = 'Auto'
-            ManualOverrideMode = $null
-            ManualOverrideSource = $null
-            ManualOverrideTimestamp = $null
-            ResumeAutomaticRequested = $false
-            RequestedMode = $null
-            RequestedModeSource = $null
-            WakeSignal = $null
+            return $trigger
         }
     }
 
@@ -84,65 +44,60 @@ Describe 'PerformanceManagerGB - Ripristino automatico dalla tray' {
         $script:trayState.ManualOverrideMode = $null
         $script:trayState.ManualOverrideSource = $null
         $script:trayState.ManualOverrideTimestamp = $null
-        $script:trayState.ResumeAutomaticRequested = $false
         $script:trayState.RequestedMode = $null
         $script:trayState.RequestedModeSource = $null
-        $script:trayState.WakeSignal = New-TestWakeSignal
+        $script:trayState.ResumeAutomaticRequested = $false
+        $script:trayState.WakeSignal = [PSCustomObject]@{ SetCalls = 0 }
+        $script:trayState.WakeSignal | Add-Member -MemberType ScriptMethod -Name Set -Value { $this.SetCalls++ } -Force
 
-        Mock Update-PerformanceMode { }
-        Mock Set-PerformanceMode { }
+        Mock Update-PerformanceMode {}
+        Mock Invoke-ModeSelection {}
+        Mock Write-Log {}
     }
 
-    Context 'Handler riprendi automatico' {
-        It 'imposta ResumeAutomaticRequested e chiama WakeSignal.Set' {
-            Invoke-ResumeAutoClick -State $script:trayState
+    It 'forzatura riuscita aggiorna override manuale' {
+        Mock Invoke-ModeSelection {}
 
-            $script:trayState.ResumeAutomaticRequested | Should -BeTrue
-            $script:trayState.WakeSignal.SetCalls | Should -Be 1
-        }
+        $ok = Invoke-ForcedModeRequest -RequestedMode 1 -RequestedModeSource 'Tray'
+
+        $ok | Should -BeTrue
+        $script:trayState.ControlMode | Should -Be 'Manual'
+        $script:trayState.ManualOverrideMode | Should -Be 1
+        (Get-ExpectedModePl1W -Mode 1) | Should -Be 18
     }
 
-    Context 'Main loop ripristino automatico' {
-        It 'azzera override e richieste manuali e usa trigger resume' {
-            $script:trayState.ControlMode = 'Manual'
-            $script:trayState.ManualOverrideMode = 2
-            $script:trayState.ManualOverrideSource = 'Tray'
-            $script:trayState.ManualOverrideTimestamp = (Get-Date).AddMinutes(-5)
-            $script:trayState.RequestedMode = 1
-            $script:trayState.RequestedModeSource = 'Tray'
-            $script:trayState.ResumeAutomaticRequested = $true
+    It 'forzatura fallita non aggiorna override manuale' {
+        Mock Invoke-ModeSelection { throw 'Verifica PL1 fallita: modalita=1, atteso=18W, rilevato=8W.' }
 
-            $result = Invoke-LoopCommand -State $script:trayState
+        $ok = Invoke-ForcedModeRequest -RequestedMode 1 -RequestedModeSource 'Tray'
 
-            $result.Trigger | Should -Be 'resume'
-            $result.ResumeRequested | Should -BeTrue
-            $script:trayState.ControlMode | Should -Be 'Auto'
-            $script:trayState.ManualOverrideMode | Should -Be $null
-            $script:trayState.ManualOverrideSource | Should -Be $null
-            $script:trayState.ManualOverrideTimestamp | Should -Be $null
-            $script:trayState.RequestedMode | Should -Be $null
-            $script:trayState.RequestedModeSource | Should -Be $null
-            $script:trayState.ResumeAutomaticRequested | Should -BeFalse
+        $ok | Should -BeFalse
+        $script:trayState.ControlMode | Should -Be 'Auto'
+        $script:trayState.ManualOverrideMode | Should -Be $null
+    }
 
-            Should -Invoke Update-PerformanceMode -Times 1 -ParameterFilter { $Trigger -eq 'resume' }
-            Should -Invoke Set-PerformanceMode -Times 0
-        }
+    It 'click riprendi automatico imposta flag e sveglia wake signal' {
+        Invoke-ResumeAutoClick -State $script:trayState
 
-        It 'esegue la richiesta manuale quando resume non e richiesto' {
-            $script:trayState.RequestedMode = 1
-            $script:trayState.RequestedModeSource = 'Tray'
+        $script:trayState.ResumeAutomaticRequested | Should -BeTrue
+        $script:trayState.WakeSignal.SetCalls | Should -Be 1
+    }
 
-            $result = Invoke-LoopCommand -State $script:trayState
+    It 'loop con resume richiesto azzera override e usa trigger resume' {
+        $script:trayState.ControlMode = 'Manual'
+        $script:trayState.ManualOverrideMode = 3
+        $script:trayState.ManualOverrideSource = 'Tray'
+        $script:trayState.ManualOverrideTimestamp = Get-Date
+        $script:trayState.RequestedMode = 0
+        $script:trayState.RequestedModeSource = 'Tray'
+        $script:trayState.ResumeAutomaticRequested = $true
 
-            $result.Trigger | Should -Be 'polling'
-            $result.JustForced | Should -BeTrue
-            $script:trayState.ControlMode | Should -Be 'Manual'
-            $script:trayState.ManualOverrideMode | Should -Be 1
-            $script:trayState.ManualOverrideSource | Should -Be 'Tray'
-            $script:trayState.RequestedMode | Should -Be $null
+        $trigger = Invoke-LoopCommand -State $script:trayState
 
-            Should -Invoke Set-PerformanceMode -Times 1 -ParameterFilter { $Mode -eq 1 }
-            Should -Invoke Update-PerformanceMode -Times 1 -ParameterFilter { $Trigger -eq 'polling' }
-        }
+        $trigger | Should -Be 'resume'
+        $script:trayState.ControlMode | Should -Be 'Auto'
+        $script:trayState.ManualOverrideMode | Should -Be $null
+        $script:trayState.RequestedMode | Should -Be $null
+        Should -Invoke Update-PerformanceMode -Times 1 -ParameterFilter { $Trigger -eq 'resume' }
     }
 }

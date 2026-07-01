@@ -13,6 +13,8 @@ versioning secondo [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Il comando "Forza modalità" dalla tray ora usa lo stesso percorso di applicazione della logica automatica e verifica la modalità realmente impostata prima di aggiornare UI/stato
+- Verifica PL1 post-applicazione introdotta nel percorso automatico/forzato: mapping dinamico 0/1/2/3 -> 8/18/25/25W, con retry telemetria e blocco del successo in caso di mismatch
+- Verifica PL1 resa trasparente: ora tenta sorgenti runtime reali (CIM) e, se non verificabile, segnala esplicitamente "non verificabile" senza dichiarare successo PL1
 
 ## [1.0.4] - 2026-03-04
 ### Fixed
